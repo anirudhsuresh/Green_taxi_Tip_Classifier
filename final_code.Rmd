@@ -1,0 +1,780 @@
+---
+title: "<center>problem 2<center>"
+author: "<center>Anirudh<center>"
+date: "<center>14/03/2021<center>"
+output: html_document
+---
+
+### Classifaction model on Tips
+1. <span style="color:blue">*Project Statement *</span>: Predict if a particular taxi trip was able to secure a tip from the passenger for that ride \
+2. <span style="color:blue">*Data set *</span>: 
+a. [Green Taxi](https://s3.amazonaws.com/nyc-tlc/trip+data/green_tripdata_2019-01.csv) data set for the Year 2019 and the Month of January from NYC government website.\
+b. [Taxi zone](https://s3.amazonaws.com/nyc-tlc/misc/taxi+_zone_lookup.csv) look up table , in order to get the borough where the taxi operated \
+3. <span style="color:blue">*Contributor *</span>: Anirudh Suresh Ramchandran
+
+
+
+
+#### First we include all the libraries that we want in order to run the whole code 
+```{r libraries, message=FALSE, warning=FALSE}
+# ---------------------------------------libraries ----------------------------------------------
+library(mlbench)
+library(caret)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(caret)
+library(olsrr)
+library(randomForest) 
+library(cowplot)
+library(tidymodels)
+library(parsnip)
+library(reshape)
+library(pROC)
+library(ggeasy)
+
+```
+
+#### Next we read all the relevant csv's necessary for this problem 
+```{r message=FALSE, warning=FALSE,results='hide'}
+
+# ---------------------------------------import the csv's ----------------------------------------------
+
+df<-read.csv('data/green_tripdata_2019-01.csv')
+pick_up_zones<-read.csv('data/pick_up_taxi_zone_lookup.csv')
+drop_zones<-read.csv('data/drop_zones.csv')
+
+
+```
+#### Merging
+
+Now since I was interested in also analyzing if the taxi getting a tip was depending on where it picked up the rider or dropped them, I merged them with two similar csv's. The first csv merged on the DOlocation and was able to give different boroughs from where the passenger was picked up by taxi driver. 
+
+```{r message=FALSE, warning=FALSE,results='hide'}
+# ---------------------------------------merge-----------------------------------------------------------
+
+df<-left_join(df,pick_up_zones,by='PULocationID')
+
+names(df)[names(df) == 'Borough'] <- 'pick_up_borough'
+#names(df)
+#drop locations 
+df<-left_join(df,drop_zones,by='DOLocationID')
+
+names(df)[names(df) == 'Borough'] <- 'drop_borough'
+
+#names(df)
+
+```
+
+
+#### Cleaning 
+
+In the next section I perform some cleaning, where I check for negative values in columns. Like the tip amount cannot be a negative value, similarly the fare also cannot be negative. 
+
+
+```{r message=FALSE, warning=FALSE,results='hide'}
+# ---------------------------------------cleaning-----------------------------------------------------
+glimpse(df)
+str(df)
+summary(df)
+
+
+summary(df$fare_amount)
+# negative fares we can exclude them 
+df <- df[df$fare_amount>= 0, ]
+summary(df$fare_amount)
+#
+summary(df$tip_amount)
+df <- df[df$tip_amount>= 0, ]
+
+
+summary(df$mta_tax)
+df <- df[df$mta_tax>= 0, ]
+
+summary(df$extra)
+df <- df[df$extra>= 0, ]
+df <- df[df$extra<= 1, ]
+
+
+summary(df$tolls_amount)
+df[df$tolls_amount>= 0, ]
+
+
+df<-df%>%filter(passenger_count!=0)
+df<-df%>%filter(passenger_count<=6)
+summary(df$passenger_count)
+df[df$passenger_count> 0, ]
+df[df$passenger_count<= 6, ]
+unique(df$passenger_count)
+
+summary(df$improvement_surcharge)
+df[df$improvement_surcharge>= 0, ]
+
+summary(df$total_amount)
+df[df$total_amount>= 0, ]
+```
+
+
+#### More cleaning 
+
+```{r echo=TRUE,results='hide'}
+
+# ---------------------------------------removing certain columns-----------------------------------------------------
+
+df$ehail_fee <- NULL
+df$store_and_fwd_flag <- NULL
+# this also has a lot of null values hence im not using it 
+df$congestion_surcharge <- NULL
+
+
+```
+
+
+
+#### Feature engineering
+
+Since we interested in predicting if a particular ride was able to secure a tip , we first calculate a variable `tip_percenatge` . Which is basically the ratio of the percentage tip amount by the total amount for that taxi ride . 
+From this variable , we create another variable which indicates if a tip was received or not . Tips received are indicted using `1` while tips not received  are indicated using `0`. This variable `gave_tip` turns into our dependent variable 
+```{r echo=FALSE,results='hide'}
+
+#-------------------------------------------converting date variables to right data type-------------------------------
+#-------------------------------------------feature engineering ------------------------------------------------------
+
+
+df$hour_p <- hour(df$lpep_pickup_datetime)
+df$hour_d <- hour(df$lpep_dropoff_datetime)
+
+# tip percentage
+df<- df%>%
+  mutate(tip_percentage=((tip_amount/total_amount)*100))
+
+#ELAPSED TIME variable 
+df<-df%>%
+  mutate(time_elapsed_mins = difftime(lpep_dropoff_datetime,lpep_pickup_datetime, units ="mins"))
+df$time_elapsed_mins <- as.numeric(df$time_elapsed_mins)
+df<-df%>%filter(time_elapsed_mins<=720)
+#summary(df$time_elapsed_mins)
+#speed
+df <- df %>%mutate(avg_speed = (trip_distance/(time_elapsed_mins/60)))
+df$avg_speed<- as.numeric(df$avg_speed)
+summary(df$avg_speed)
+df<-df[!(df$avg_speed >70),]
+
+# if they gave the tip or not
+df <- df %>%
+  mutate(gave_tip = ifelse(tip_percentage == 0,0,1))
+
+
+```
+
+#### Type conversion
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+#-------------------------------------------type conversion ------------------------------------------------------
+
+df$lpep_pickup_datetime <- as.POSIXct(df$lpep_pickup_datetime)
+df$lpep_dropoff_datetime <- as.POSIXct(df$lpep_dropoff_datetime)
+
+
+
+df$VendorID<-as.factor(df$VendorID)
+df$RatecodeID<-as.factor(df$RatecodeID)
+df$trip_type <- as.factor(df$trip_type)
+df$payment_type <- as.factor(df$payment_type)
+df$hour_p <- as.factor(df$hour_p)
+df$hour_d <- as.factor(df$hour_d)
+df$pick_up_borough <- as.factor(df$pick_up_borough)
+df$drop_borough <- as.factor(df$drop_borough)
+df$gave_tip<-as.factor(df$gave_tip)
+df$passenger_count<-as.factor(df$passenger_count)
+
+
+```
+
+#### Removing nulls
+
+```{r results='hide'}
+
+
+#-------------------------------------------removing null values------------------------------------------------------
+df<-na.omit(df)
+
+summary(df)
+str(df)
+
+
+
+```
+
+
+#### Exploratory data analysis For categorical Variables
+In this section, for the EDA ,our main aim is understand how each independent variable influences the ride and the driver is able to hence secure a tip 
+All the independent variables are compare with the dependent variable `gave_tip`.
+The variable `gave_tip` just explains if that particular trip (row in the data set) received a tip from the rider.
+Few variables such as `RatecodeID` were not studied owing to their skewness.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+#----------------- pick up location ------------------
+pick_count<-df%>%group_by(pick_up_borough,gave_tip)%>%summarize(count=n())
+
+pick_count<-as_tibble(pick_count)
+
+pick_count<-pick_count%>% filter(pick_count$pick_up_borough %in% c("Queens","Brooklyn","Manhattan","Brooklyn","Bronx"))
+pick_count<-pick_count%>% filter(pick_count$gave_tip ==1)
+pick_count%>% ggplot(aes(reorder(pick_up_borough,count),y=count,fill=gave_tip))+ 
+  geom_bar(stat = "identity", position=position_dodge(),width=0.2)+
+  ylab("Number of trips")+ # for the x axis label
+  xlab("Different Borough's")+ # for the y axis label
+  labs(title='Tipping based on Pick up Boroughs')+labs(fill="Tip Given")+theme_classic()+ggeasy::easy_center_title()
+```
+
+##### Inference :
+This graph shows us the variation in tipping frequency based on picking up passengers in different boroughs. The different boroughs are Manhattan, Bronx, Queens, and Brooklyn. 
+From the graph, we can infer that if a passenger is picked up from the Manhattan boroughs, they are most likely to tip than passengers picked up in other boroughs. 
+This might be an important predictor variable. 
+
+
+```{r message=FALSE}
+#---------- drop off location ------------
+d_count<-df%>% group_by(drop_borough,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+
+
+d_count<-as_tibble(d_count)
+
+d_count<-d_count%>% filter(d_count$drop_borough %in% c("Queens","Brooklyn","Manhattan","Brooklyn","Bronx"))
+d_count<-d_count%>% filter(d_count$gave_tip ==1)
+d_count%>% ggplot(aes(reorder(drop_borough,count),y=count,fill=gave_tip))+ 
+  geom_bar(stat = "identity", position=position_dodge(),width=0.2)+
+  ylab("Number of trips")+ # for the x axis label
+  xlab("Different Borough's")+ # for the y axis label
+  labs(title='Tipping based on Drop Boroughs')+labs(fill="Tip:1=Yes/0=NO")+theme_classic()+ggeasy::easy_center_title() 
+
+```
+
+##### Inference :
+This graph shows us the variation in tipping frequency based on passengers' drop-off location in different boroughs. The different boroughs are Manhattan, Bronx, Queens, and Brooklyn. 
+From the graph, we can infer that if a passenger is dropped off within the  Manhattan borough, then they are far more likelier to tip than passengers dropped off in any other boroughs. 
+This also might be an important predictor variable.
+
+
+
+
+
+```{r message=FALSE, warning=FALSE}
+#----------payment_type ------------
+library(tidyverse)
+pay_count<-df%>% group_by(payment_type,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+#pay_count<-pay_count%>%filter(gave_tip==1)
+
+pay_count<-pay_count%>% filter(payment_type %in% c('1','2'))
+
+pay_count%>% ggplot(aes(reorder(payment_type,count),y=count,fill=gave_tip))+ 
+  geom_bar(stat = "identity", position=position_dodge(),width=0.2)+
+  ylab("Number of trips")+ # for the x axis label
+  xlab("Payment type")+ # for the y axis label
+  labs(title='Tipping based on payment types')+labs(fill="Tip:1=Yes/0=NO")+theme_classic()+ggeasy::easy_center_title() 
+
+```
+
+##### Inference :
+This graph shows us the variation in tipping frequency based on the passenger's different payment type. 
+'1' Indicates that the passenger used a credit card, whereas '2' indicates that they used cash.
+From the graph, we can infer that the 
+a likelihood of a passenger tipping is far greater when they use a credit card as the payment type.
+
+```{r message=FALSE}
+#----------trip_type ------------
+
+tr_count<-df%>% group_by(trip_type,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+text=c('Cash','Credit Card')
+tr_count<-tr_count%>%filter(gave_tip==1)
+
+tr_count%>% ggplot(aes(reorder(trip_type,count),y=count,fill=gave_tip))+ 
+  geom_bar(stat = "identity", position=position_dodge(),width=0.2)+
+  ylab("Number of trips")+ # for the x axis label
+  xlab("trip type")+ # for the y axis label
+  labs(title='Tipping based on trip types')+labs(fill="Tip:1=Yes/0=NO")+theme_classic()+ggeasy::easy_center_title() 
+```
+
+##### Inference :
+
+This graph shows us the variation in tipping frequency based on the types of taxi rides 
+'1' Indicates that the taxi was hailed from the street, whereas '2' indicates that the taxi was dispatched from possibly via a call 
+From the graph, we can infer that the 
+a likelihood of a passenger tipping is far greater when it is a street hailed cab 
+
+
+```{r message=FALSE}
+#----------hour_d------------
+
+hour_d_code<-df%>% group_by(hour_d,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+
+hour_d_code<-hour_d_code%>%filter(gave_tip==1)
+
+
+hour_d_code%>% ggplot(aes(reorder(hour_d,count),y=count,fill=gave_tip))+ 
+  geom_bar(stat = "identity", position=position_dodge(),width=0.2)+
+  ylab("Number of trips")+ # for the x axis label
+  xlab("Dropping Hour")+ # for the y axis label
+  labs(title='Tipping based on Drop Hour')+labs(fill="Tip Given")+theme_classic()+ggeasy::easy_center_title() 
+
+```
+
+##### Inference : 
+This graph shows us the variation in tipping frequency based on the 
+drop-off hour of the passengers 
+From the graph, we can infer that the 
+a likelihood of a passenger tipping is far greater when they are dropped off around 6 pm, and lowest at 5 am
+
+```{r message=FALSE}
+#----------hour_p------------
+
+
+
+hour_p_code<-df%>% group_by(hour_p,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+
+hour_p_code<-hour_p_code%>%filter(gave_tip==1)
+
+
+hour_p_code%>% ggplot(aes(reorder(hour_p,count),y=count,fill=gave_tip))+ 
+  geom_bar(stat = "identity", position=position_dodge(),width=0.2)+
+  ylab("Number of trips")+ # for the x axis label
+  xlab("Pick up Hour")+ # for the y axis label
+  labs(title='Tipping based on Pick up Hour')+labs(fill="Tip Given")+theme_classic()+ggeasy::easy_center_title() 
+
+
+```
+
+##### Inference : 
+This graph shows us the variation in tipping frequency based on the 
+pick-up hour of the passengers 
+From the graph, we can infer that the 
+a likelihood of a passenger tipping is far greater when they are picked up around 6 pm and lowest at 5 am. 
+
+Now that we have analyzed how tipping is affected by the pick up and drop location of the passengers we are interested in understanding if, possibly having more passengers would lead to a larger value of tip.  
+
+```{r message=FALSE, warning=FALSE}
+#----------passenger_count------------
+
+
+pss_code<-df%>% group_by(passenger_count,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+pss_code<-pss_code%>%filter(gave_tip==1)
+
+
+pss_code%>% ggplot(aes(reorder(passenger_count,count),y=count))+ 
+  geom_bar(stat = "identity", position=position_dodge(),width=0.2)+
+  ylab("Number of trips")+ # for the x axis label
+  xlab("Number of Passenger")+ # for the y axis label
+  labs(title='Distribution of total trips getting tips based on the passenger categories ')+labs(fill="Tip Given")+theme_classic()+ggeasy::easy_center_title() 
+
+```
+
+##### Inference : 
+
+This graph shows us the variation in tipping frequency based on the 
+the number of passengers present in the taxi.   
+From the graph, we can infer that the tipping frequency is higher when there is only a single passenger in the taxi ride. 
+
+
+```{r message=FALSE}
+#----------VendorID------------
+
+
+v_code<-df%>% group_by(VendorID,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+v_code<-v_code%>%filter(gave_tip==1)
+
+
+v_code%>% ggplot(aes(reorder(VendorID,count),y=count))+ 
+  geom_bar(stat = "identity", position=position_dodge(),width=0.2)+
+  ylab("Number of trips")+ # for the x axis label
+  xlab("Types of Vendors")+ # for the y axis label
+  labs(title='Tipping based on VendorID')+labs(fill="Tip Given")+theme_classic()+ggeasy::easy_center_title() 
+
+```
+
+##### Inference : 
+
+
+This graph shows us the variation in tipping frequency based on the 
+VendorID for the New York taxis 
+'1' indicates Creative Mobile Technologies
+whereas '2'  shows VeriFone Inc. 
+Next, we can see that the second vendor: VeriFone Inc seems to get more tips than the other vendor.
+
+#### Exploratory data analysis For categorical Variables :
+
+To prevent over-plotting only a small percentage of the data set is used in all the plots.
+
+```{r}
+#--------------------------------------------------------numerical variables analysis -------------------------------------
+# for numerical variables it was very slow for the whole data set  
+set.seed(2)
+sample <- sample(1:nrow(df), 0.010*nrow(df)) 
+p_df <-(df[sample,])
+p_df <-na.omit(p_df )
+
+```
+
+
+
+```{r message=FALSE, warning=FALSE}
+d_code<-df%>% group_by(trip_distance,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+d_code%>%ggplot(aes(x=trip_distance,fill=gave_tip))+geom_histogram(binwidth = 1)+
+  ylab("Number of trips")+ # for the x axis label
+  xlab("Trip Distance")+ # for the y axis label
+  labs(title='Tipping based on distance')+labs(fill="Tip:1=Yes/0=NO")+theme_classic()+ggeasy::easy_center_title() 
+```
+
+
+
+
+##### Inference : 
+
+
+
+```{r message=FALSE}
+
+
+e_code<-df%>% group_by(time_elapsed_mins,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+e_code%>%ggplot(aes(x=time_elapsed_mins,fill=gave_tip))+geom_histogram(binwidth = 1)+
+  xlab("Time elapsed") +
+   ylab("Number of trips")+
+  labs(title='Tipping based time elapsed')+labs(fill="Tip:1=Yes/0=NO")+ggeasy::easy_center_title()
+
+```
+
+
+
+
+##### Inference : 
+
+This graph shows us the variation in tipping frequency based on the time elapsed. 
+From this graph, we can infer that as the time spent in the taxi increases, the chances of getting a tip seem to drop.
+
+
+
+```{r message=FALSE}
+# speed as well
+av_code<-df%>% group_by(avg_speed,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+av_code%>%ggplot(aes(x=avg_speed,fill=gave_tip))+geom_histogram(binwidth = 1)+xlab("Average Speed")+ylab("Number of trips ")+labs(title='Tipping based Average Speed')+labs(fill="Tip:1=Yes/0=NO")+ggeasy::easy_center_title()
+
+```
+
+
+
+
+##### Inference : 
+
+This graph shows us the variation in tipping frequency based on the taxi speed. 
+From this graph, we can infer that as the taxi's speed increases, the chances of getting a tip seem to drop. 
+There is a surge in cases getting tips at around a speed of 15 units. This can mean passengers want to travel quickly but also  have a comfortable and safe ride 
+and hence tend to tip such rides more often 
+
+```{r message=FALSE, warning=FALSE}
+
+e_code<-df%>% group_by(extra,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+
+e_code<-e_code%>%filter(gave_tip==1)
+e_code%>%ggplot(aes(x=extra,y=count,color=gave_tip))+geom_line()+
+ xlab(' extra charges charged')+
+  ylab('Number of Trips ')+
+  labs(title='Tipping based extra charges')+labs(color="Tip Given")+ggeasy::easy_center_title()
+
+
+
+
+
+
+```
+
+
+
+
+##### Inference : 
+This graph shows us the variation in tipping frequency based on the extra charges levied on the passengers. 
+From this graph, we can infer that as the 
+as these charges increase, the chances of getting a tip seem to drop. 
+
+
+```{r warning=FALSE}
+# tolls_amount
+
+tr_code<-df%>% group_by(tolls_amount,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+tr_code%>%ggplot(aes(x=tolls_amount,fill=gave_tip))+geom_histogram(binwidth = 4)+
+ xlab('tolls charged')+
+  ylab('Trips')+
+  labs(title='Tipping based on tolls amount')+labs(fill="Tip:1=Yes/0=NO")+ggeasy::easy_center_title()
+
+
+
+
+
+```
+
+
+
+
+##### Inference : 
+This graph shows us the variation in tipping frequency based on the toll charges levied on the passengers. 
+From this graph, we can infer that as the 
+as these charges increase, the chances of getting a tip seem to drop. 
+
+
+```{r}
+#improvement_surcharge
+p_df%>% ggplot(aes(x=improvement_surcharge,y=gave_tip,color=gave_tip))+geom_point()+
+  xlab('improvement surcharge')+
+  ylab('Tipping Yes/No')+
+  labs(title='Tipping based on improvement surcharge')+labs(color="Tip Given")+
+  ggeasy::easy_center_title()+theme_classic()
+
+
+ii_code<-df%>% group_by(improvement_surcharge,gave_tip)%>%
+  summarize(count=n())%>%arrange(desc(count))
+
+
+ii_code<-ii_code%>%filter(gave_tip==1)
+
+
+ii_code%>% ggplot(aes(reorder(improvement_surcharge,count),y=count,fill=gave_tip))+ 
+  geom_bar(stat = "identity", position=position_dodge(),width=0.2)+
+  xlab('improvement surcharge')+
+  ylab('Tipping Yes/No')+
+  labs(title='Tipping based on improvement surcharge')+labs(color="Tip Given")+
+  ggeasy::easy_center_title()+theme_classic()+ggeasy::easy_center_title() 
+
+
+
+```
+
+
+
+
+
+##### Inference : 
+This graph shows us the variation in tipping frequency based on the extra charges levied on the passengers. 
+From this graph, we can infer that as the 
+as these charges increase, the chances of getting a tip seem surprising increase.
+
+To further understand the relationship between tipping and other numerical variables a heat map will be drawn in the next section. Here the variable `tip_percentage` is used. Since heat maps can only be done between numerical variables.
+ 
+ 
+#### Correlations for numerical variables 
+```{r message=FALSE, include=FALSE}
+#-------------------------correlation---------------------------------------------
+
+
+nums <- unlist(lapply(df, is.numeric))
+```
+We select all numerical variables 
+
+```{r}
+num_df<-df[ , nums]
+
+names(num_df)
+num_df$VendorID<- NULL
+num_df$PULocationID<-NULL
+num_df$DOLocationID <-NULL
+
+set.seed(5)
+
+sample <- sample(1:nrow(num_df), 0.010*nrow(num_df)) 
+x1 <-(num_df[sample,])
+#summary(x1)
+x1 <- x1[!is.infinite(rowSums(x1)),]
+x1<-na.omit(x1)
+data <- as.matrix(x1)
+a<-cor(data)
+correlationMatrix<-a
+
+melted_cormat <- melt(a)# a is correlations matrix 
+#x2,X1 
+ggplot(data = melted_cormat, aes(X2, X1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") +
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 12, hjust = 1))+
+  coord_fixed()
+
+correlationMatrix<-a
+
+
+
+```
+From the heat map we can notice that `tip_percentage` is correlated to the `improvement_surcharge`, `extra`, `tip_amount`.
+It also looks like it is negatively correlated to the `trip_distance`.
+Now we will try and find the highly correlated variables to prevent multi-collinearity.
+
+
+```{r}
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.7)
+# print indexes of highly correlated attributes
+#print(highlyCorrelated)
+
+b<-a
+cor_tibble<-as_tibble(b)
+# variables are 
+names(cor_tibble[1])
+names(cor_tibble[2])
+names(cor_tibble[5])
+```
+So for our machine learning model we will not select all among these following variables : `trip_distance,fare_amount,tip_amount` . Since these variables are highly correlated among themselves and selecting them would lead to significant multicollinearity in our model 
+
+#### Discarding columns 
+```{r}
+
+#--------------------------------discarding columns that are pretty useless----------------------
+
+df$PULocationID<-NULL     
+
+df$DOLocationID<-NULL 
+df$lpep_pickup_datetime <-NULL          
+df$lpep_dropoff_datetime <-NULL 
+
+
+
+```
+
+
+#### Train Test splits 
+
+```{r}
+#-----------------------------train /test sets-----------------------------------------
+
+cols_include=c("passenger_count","trip_distance","tolls_amount","hour_p","avg_speed","payment_type","gave_tip","drop_borough")
+#cols_include=c("passenger_count","trip_distance","improvement_surcharge","hour_p","avg_speed","gave_tip","drop_borough","pick_up_borough")
+#cols_include=c("passenger_count","trip_distance","tolls_amount","hour_p","avg_speed","gave_tip","drop_borough")
+
+#----------
+x <- df[,(colnames(df) %in% cols_include)]
+set.seed(105)
+sample <- sample(1:nrow(df), 0.85*nrow(df)) 
+
+train <-(x[sample,])
+test <-(x[-sample,])
+
+```
+
+From our exploratory data analysis , we found that the number of passengers impacted the tips.If there was only one passenger they were found to tip more as compared to having more passengers.Furthermore the drop location seemed to impact whether that particular ride got tips or not. Picking up in Manhattan could result in a tip more than other locations 
+We could have chosen either drop or the pick up borough(s), since both seemed to have some impact on the tips given. The speed also seemed to impact the tips hence it was also chosen as predictor variable.
+Furthermore the different pick up or drop hour were also looked like they affected the tips and even in this one of them could be chosen. In my case I choose the pick up hour as another predictor variable .
+Next taking the fare in the credit card seemed to get more tip as compared to accepting the payment in cash , hence that was also included . 
+Lastly it was noted that having more tolls in the total fare of the ride seemed to impact the passengers giving that particular ride a tip 
+
+
+#### Random Forest Model 
+```{r echo=TRUE}
+tip_rf <- rand_forest(trees=100, mode="classification") %>% 
+  set_engine("randomForest") %>% 
+  fit(gave_tip~., data= train)
+
+tip_rf
+
+predict(tip_rf , test)
+
+
+```
+
+
+#### Metric Testing 
+
+```{r echo=TRUE}
+
+tip_rf %>% 
+  predict(test) %>% 
+  bind_cols(test) %>% 
+  metrics(truth =gave_tip, estimate = .pred_class)
+
+```
+As we can see we are able to get a accuracy of around 88% . While the kappa is around 75% .
+
+
+
+
+
+#### Hyper parameter Tuning 
+```{r eval=FALSE}
+
+# Create model with default parameters
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+train11=train1[1:1500,]
+
+metric <- "Accuracy"
+set.seed(7)
+mtry <- sqrt(9)
+tunegrid <- expand.grid(.mtry=mtry)
+rf_default <- train(gave_tip~., data=train11, method="rf", 
+                    metric=metric, tuneGrid=tunegrid, trControl=control)
+print(rf_default)
+
+#-----
+
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+train11=train1[1:15000,]
+
+metric <- "Accuracy"
+set.seed(7)
+mtry <- sqrt(9)
+tunegrid <- expand.grid(.mtry=mtry)
+rf_random <- train(gave_tip~., data=train11, method="rf",
+                    metric=metric, tuneLength=15, trControl=control)
+
+print(rf_random)
+plot(rf_random)
+
+
+
+```
+Owing to the lack of computational resources, I was not able to tune my model completely. I was only able to run the code to tune the `mtry` parameter of the random forest model. For the `mtry` parameter as well I was only able to feed in at  the max 1500 rows for training in order to find the best parameter . Any more rows and the whole hyper parameter function was unable to converge 
+
+
+
+#### Results:
+
+I was aiming to predict in which situations the taxi driver was able to secure a tip . Using parameters like car speed , its distance traveled , where the passenger was picked up and their location. Using these factors we were able to determine if a particular ride would be able to secure a tip or not with a success rate of around 88%.
+So in the end we can conclude that the taxi driver would be able to most tips if he / she followed the following steps :
+
+1. Picked up and dropped off a passenger in and around Manhattan 
+2. Worked during the peak rush hours of 6-7 pm in the evenings 
+3. Accepted payments in credits cards rather than cash 
+4. Accepted rides within a 30 miles radius of their pickup locations 
+While we cannot say these factors will always lead to the taxi ride getting tips , these factors might prove to help the taxi driver secure a tip from the passenger 
+
+
+
+
+#### References :
+
+1. [Problem Formulation and Approach tips/hints](https://rpubs.com/Vibs-DataScience/NYC-Taxi-Tip-Amount-Prediction)
+2. [Random Forest](https://www.guru99.com/r-random-forest-tutorial.html)
+3. [Hyper Parameter Tuning](https://machinelearningmastery.com/hyperparameter-optimization-with-random-search-and-grid-search/)
+4.  Lecture R scripts 
+5. [General Hints and tricks for machine learning in R](https://machinelearningmastery.com/)

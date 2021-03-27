@@ -24,3 +24,30 @@ After getting the data from the webisite and merging the two data sets , I made 
 
 
 ## EDA 
+Below are few hilights of the EDA done on the data sets 
+
+
+  ![](pick_up_b.png)
+  ![](pickup_hour.png)
+  ![](heat_map.png)
+  
+## Model Building
+First, I transformed the categorical variables into factors. I also split the data into train and tests sets with a test size of 15%.
+
+I tried to first predict the actual price of the tip of the taxi , upon relalizing these models perfomed poorly , i stuck to doing a classifer model to just predict if a tip was secured or not .Just a simple 1 for if tip was given and 0 if tip was not given for that trip .
+
+Random Forest – Since , the data had a lot of varibables which are factors , I that this would be a good fit.
+  
+## Model performance:
+ * Accuracy:88%
+ * Kappa 75%
+
+## Conclusion:
+So in the end we can conclude that the taxi driver would be able to most tips if he / she followed the following steps :
+
+1. Picked up and dropped off a passenger in and around Manhattan
+2. Worked during the peak rush hours of 6-7 pm in the evenings
+3. Accepted payments in credits cards rather than cash
+4. Accepted rides within a 30 miles radius of their pickup locations While we cannot say these factors will always lead to the taxi ride getting tips , these factors might prove to help the taxi driver secure a tip from the passenger
+
+

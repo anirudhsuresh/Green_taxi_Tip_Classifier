@@ -8,7 +8,7 @@
 
 ## Code and Packages Used 
 * *R Version :* 4.0.5 
-* *Packages:* mlbench,tidyverse,ggplot2,caret,lubridate,olsrr,randomForest,cowplot,tidymodels,parsnip,reshape,pROC,ggeasy
+* *Packages:* mlbench, tidyverse, ggplot2, caret, lubridate, olsrr, randomForest, cowplot, tidymodels, parsnip, reshape, pROC, ggeasy
 
 ## Data Cleaning 
 After getting the data from the webisite and merging the two data sets , I made the following changes and created the following variables :

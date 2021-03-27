@@ -27,7 +27,7 @@ After getting the data from the webisite and merging the two data sets , I made 
 Below are few hilights of the EDA done on the data sets 
 
 
-  ![](pick_up_b.png =250x250)
+  ![](pick_up_b.png )
   ![](pickup_hour.png)
   ![](heat_map.png)
   

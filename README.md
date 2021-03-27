@@ -1,5 +1,5 @@
 # Green Taxi Tip Classifier Model : Project Overview :
-## Project can be viewed at this [link](https://htmlpreview.github.io/?https://github.com/anirudhsuresh/Green_taxi_Tip_Classifier/blob/master/final_code.html)
+## Project's HTML file can be viewed at this [link](https://htmlpreview.github.io/?https://github.com/anirudhsuresh/Green_taxi_Tip_Classifier/blob/master/final_code.html)
 * Created a tool based on a random forest model which could predict if a taxi ride in NYC would be able to secure tips based on a number of factors 
 * Used [Data](https://s3.amazonaws.com/nyc-tlc/trip+data/green_tripdata_2019-01.csv) from January 2019 from NYC open data
 * Also added [taxi zones](https://s3.amazonaws.com/nyc-tlc/misc/taxi+_zone_lookup.csv) data , in order to be able to get the borough where the taxi operated
